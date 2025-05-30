@@ -53,9 +53,15 @@ ExpressionDialog::~ExpressionDialog()
 void ExpressionDialog::Show()
 {
     if (wDialogShell != None) {
+        XtManageChild(wMainForm);
+        XtPopup(wDialogShell, XtGrabNone);
+        
+        // Ensure widgets are realized before populating the list
+        if (!XtIsRealized(wDialogShell)) {
+            XtRealizeWidget(wDialogShell);
+        }
+        
         RefreshVariableList();
-        XtManageChild(wDialogShell);
-        XtPopup(XtParent(wDialogShell), XtGrabNone);
         isVisible = true;
         UpdateStatus("Enter a mathematical expression using available variables", false);
     }
@@ -64,8 +70,8 @@ void ExpressionDialog::Show()
 void ExpressionDialog::Hide()
 {
     if (wDialogShell != None && isVisible) {
-        XtPopdown(XtParent(wDialogShell));
-        XtUnmanageChild(wDialogShell);
+        XtPopdown(wDialogShell);
+        XtUnmanageChild(wMainForm);
         isVisible = false;
     }
 }
@@ -104,6 +110,7 @@ void ExpressionDialog::CreateDialog()
     Display* display = XtDisplay(wDialogShell);
     Atom WM_DELETE_WINDOW = XmInternAtom(display, 
                                          const_cast<char*>("WM_DELETE_WINDOW"), False);
+    XmAddWMProtocols(wDialogShell, &WM_DELETE_WINDOW, 1);
     XmAddWMProtocolCallback(wDialogShell, WM_DELETE_WINDOW,
                            (XtCallbackProc) CBCloseDialog, (XtPointer) this);
     
@@ -116,7 +123,7 @@ void ExpressionDialog::CreateDialog()
     CreateStatusArea();
     CreateButtons();
     
-    XtManageChild(wMainForm);
+    // Don't manage the main form here - only manage it when showing the dialog
 }
 
 void ExpressionDialog::CreateExpressionArea()

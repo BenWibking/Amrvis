@@ -114,6 +114,7 @@ public:
   bool IsSet(const amrex::Amrvis::MinMaxRangeType mmrangetype, const int framenumber,
 	     const int derivednumber);
   void PrintSetMap();
+  void ResizeMinMaxForDerived(int newNumDerived);
 
   // ------------------------ levels
   void SetMinAllowableLevel(int newval) { minAllowableLevel = newval; }

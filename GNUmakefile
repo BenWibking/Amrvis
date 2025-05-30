@@ -14,11 +14,11 @@ COMP      = intel
 COMP      = gnu
 
 DEBUG     = FALSE
-#DEBUG     = TRUE
+DEBUG     = TRUE
 
 DIM       = 1
 DIM       = 3
-DIM       = 2
+#DIM       = 2
 
 USE_ARRAYVIEW = TRUE
 USE_ARRAYVIEW = FALSE

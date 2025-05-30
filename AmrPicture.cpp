@@ -862,11 +862,17 @@ void AmrPicture::APMakeImages(Palette *palptr) {
   const string vfracDerived("vfrac");
   for(int iLevel(minDrawnLevel); iLevel <= maxAllowableLevel; ++iLevel) {
     // Check if this is a user expression
-    if (pltAppPtr->IsUserExpression(currentDerived)) {
+    bool isUserExpr = pltAppPtr->IsUserExpression(pltAppStatePtr->CurrentDerivedNumber());
+    std::cout << "DEBUG: currentDerived='" << currentDerived << "', derivedNumber=" 
+              << pltAppStatePtr->CurrentDerivedNumber() << ", isUserExpr=" << isUserExpr << std::endl;
+    
+    if (isUserExpr) {
       // Handle user expression evaluation
+      std::cout << "DEBUG: Calling FillUserExpressionData for '" << currentDerived << "'" << std::endl;
       FillUserExpressionData(sliceFab[iLevel], iLevel, currentDerived);
     } else {
       // Handle built-in derived variables
+      std::cout << "DEBUG: Using DataServices for built-in variable '" << currentDerived << "'" << std::endl;
       amrex::DataServices::Dispatch(amrex::DataServices::FillVarOneFab, dataServicesPtr,
 		             (void *) (sliceFab[iLevel]),
 			     (void *) (&(sliceFab[iLevel]->box())),
@@ -2540,13 +2546,18 @@ void AmrPicture::DrawVectorField(Display *pDisplay, Drawable &pDrawable,
 
 // ---------------------------------------------------------------------
 void AmrPicture::FillUserExpressionData(FArrayBox* fab, int level, const string& expressionName) {
+    std::cout << "DEBUG: FillUserExpressionData called with expressionName='" << expressionName 
+              << "', level=" << level << std::endl;
+    
     if (!pltAppPtr || !fab) {
+        std::cout << "DEBUG: Invalid pltAppPtr or fab - returning early" << std::endl;
         return;
     }
     
     ExpressionManager* exprManager = pltAppPtr->GetExpressionManager();
     if (!exprManager) {
         // If no expression manager, fill with placeholder data
+        std::cout << "DEBUG: No expression manager found - filling with zeros" << std::endl;
         fab->setVal(0.0);
         return;
     }
@@ -2554,14 +2565,23 @@ void AmrPicture::FillUserExpressionData(FArrayBox* fab, int level, const string&
     const UserDerivedField* userField = exprManager->GetExpression(expressionName);
     if (!userField) {
         // If expression not found, fill with placeholder data
+        std::cout << "DEBUG: Expression '" << expressionName << "' not found in manager - filling with zeros" << std::endl;
         fab->setVal(0.0);
         return;
     }
     
+    std::cout << "DEBUG: Found expression '" << expressionName << "' in manager" << std::endl;
+    
     const Vector<string>& usedVars = userField->GetParser().GetUsedVariables();
+    std::cout << "DEBUG: Expression uses " << usedVars.size() << " variables" << std::endl;
+    for (int i = 0; i < usedVars.size(); ++i) {
+        std::cout << "DEBUG: Variable " << i << ": '" << usedVars[i] << "'" << std::endl;
+    }
+    
     if (usedVars.empty()) {
         // No variables used - evaluate as constant expression
         Real constantValue = userField->GetParser().EvaluateAt(Vector<Real>());
+        std::cout << "DEBUG: Constant expression evaluated to: " << constantValue << std::endl;
         fab->setVal(constantValue);
         return;
     }
@@ -2570,8 +2590,10 @@ void AmrPicture::FillUserExpressionData(FArrayBox* fab, int level, const string&
     Vector<FArrayBox> inputFabs(usedVars.size());
     
     // Fill input data with the required variables
+    std::cout << "DEBUG: Filling data for " << usedVars.size() << " variables" << std::endl;
     for (int varIdx = 0; varIdx < usedVars.size(); ++varIdx) {
         const string& varName = usedVars[varIdx];
+        std::cout << "DEBUG: Filling variable " << varIdx << ": '" << varName << "'" << std::endl;
         
         // Initialize the FArrayBox for this variable
         inputFabs[varIdx].resize(fab->box(), 1);
@@ -2582,14 +2604,27 @@ void AmrPicture::FillUserExpressionData(FArrayBox* fab, int level, const string&
                                      (void*)(&inputFabs[varIdx].box()),
                                      level,
                                      (void*)(&varName));
+        
+        // Check if data was filled successfully by examining a sample value
+        if (inputFabs[varIdx].box().numPts() > 0) {
+            IntVect iv = inputFabs[varIdx].box().smallEnd();
+            Real sampleValue = inputFabs[varIdx](iv, 0);
+            std::cout << "DEBUG: Sample value for '" << varName << "': " << sampleValue << std::endl;
+        }
     }
     
     // Evaluate the expression point by point
     const Box& box = fab->box();
     const auto& targetArray = fab->array();
     
+    std::cout << "DEBUG: Starting expression evaluation for box with " << box.numPts() << " points" << std::endl;
+    
     // Create variable value arrays for each point
     Vector<Real> varValues(usedVars.size());
+    
+    int pointCount = 0;
+    Real minResult = std::numeric_limits<Real>::max();
+    Real maxResult = std::numeric_limits<Real>::lowest();
     
     // Iterate through all points in the box
     for (IntVect iv = box.smallEnd(); iv <= box.bigEnd(); box.next(iv)) {
@@ -2603,7 +2638,20 @@ void AmrPicture::FillUserExpressionData(FArrayBox* fab, int level, const string&
         
         // Store result
         targetArray(iv, 0) = result;
+        
+        // Track min/max for debugging
+        minResult = std::min(minResult, result);
+        maxResult = std::max(maxResult, result);
+        pointCount++;
+        
+        // Print sample values for the first few points
+        if (pointCount <= 5) {
+            std::cout << "DEBUG: Point " << pointCount << " at " << iv << " evaluated to: " << result << std::endl;
+        }
     }
+    
+    std::cout << "DEBUG: Expression evaluation completed. Points: " << pointCount 
+              << ", Min: " << minResult << ", Max: " << maxResult << std::endl;
 }
 
 // ---------------------------------------------------------------------

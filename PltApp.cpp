@@ -119,7 +119,9 @@ PltApp::PltApp(XtAppContext app, Widget w, const string &filename,
     appContext(app),
     currentRangeType(Amrvis::GLOBALMINMAX),
     animating2d(isAnim),
-    paletteDrawn(false)
+    paletteDrawn(false),
+    expressionManager(nullptr),
+    expressionDialog(nullptr)
 {
   dataServicesPtr = dataservicesptr;
   currentFrame = 0;
@@ -465,7 +467,9 @@ PltApp::PltApp(XtAppContext app, Widget w, const Box &region,
     animating2d(isAnim),
     paletteDrawn(false),
     animFrames(sPltParent->animFrames),
-    lightingFilename(sPltParent->lightingFilename)
+    lightingFilename(sPltParent->lightingFilename),
+    expressionManager(nullptr),
+    expressionDialog(nullptr)
 {
   dataServicesPtr = sPltParent->dataServicesPtr;
   currentFrame = sPltParent->currentFrame;
@@ -1144,6 +1148,8 @@ void PltApp::PltAppInit(bool bSubVolume) {
 		      (XtPointer) derived);
   }  
 
+  // Note: RefreshDerivedMenu() will be called later in PltAppInit() after expression management is set up
+
 #if defined(BL_VOLUMERENDER) || defined(BL_PARALLELVOLUMERENDER)
   lightingModel = ! AVGlobals::StartWithValueModel();
   showing3dRender = false;
@@ -1743,8 +1749,13 @@ void PltApp::PltAppInit(bool bSubVolume) {
   // Initialize expression management
   expressionManager = new ExpressionManager();
   expressionManager->SetDataServices(dataServicesPtr[currentFrame]);
+  expressionManager->UpdateAvailableVariables();
   expressionDialog = new ExpressionDialog(wAmrVisTopLevel, this);
   baseNumDerived = dataServicesPtr[currentFrame]->NumDeriveFunc();
+  
+  // Now that expression management is initialized, refresh the derived menu
+  // to include user expressions and the "User Expressions..." menu item
+  RefreshDerivedMenu();
   
   if(bSubVolume) {
     //ChangeLevel(wTempDrawLevel, (XtPointer)(pltAppState->MaxDrawnLevel()), NULL);
@@ -1767,19 +1778,59 @@ void PltApp::FindAndSetMinMax(const Amrvis::MinMaxRangeType mmrangetype,
 {
   Real rMin, rMax, levMin, levMax;
   bool isSet(pltAppState->IsSet(mmrangetype, framenumber, derivednumber));
+  
+  std::cout << "DEBUG FindAndSetMinMax: derivednumber=" << derivednumber 
+            << ", currentderived='" << currentderived << "'"
+            << ", isSet=" << isSet << ", resetIfSet=" << resetIfSet << std::endl;
+            
   if(isSet == false || resetIfSet) {  // find and set the mins and maxes
-    rMin =  std::numeric_limits<Real>::max();
-    rMax = -std::numeric_limits<Real>::max();
-    for(int lev(coarselevel); lev <= finelevel; ++lev) {
-      bool minMaxValid(false);
-      DataServices::Dispatch(DataServices::MinMaxRequest,
-                             dataServicesPtr[framenumber],
-                             (void *) &(onBox[lev]),
-                             (void *) &(currentderived),
-                             lev, &levMin, &levMax, &minMaxValid);
-      if(minMaxValid) {
-        rMin = min(rMin, levMin);
-        rMax = max(rMax, levMax);
+    
+    // Check if this is a user expression
+    bool isUserExpr = IsUserExpression(derivednumber);
+    std::cout << "DEBUG FindAndSetMinMax: IsUserExpression(" << derivednumber << ") = " << isUserExpr << std::endl;
+    
+    if (isUserExpr) {
+      // For user expressions, evaluate over the domain and compute min/max
+      std::cout << "DEBUG FindAndSetMinMax: Taking user expression path" << std::endl;
+      rMin =  std::numeric_limits<Real>::max();
+      rMax = -std::numeric_limits<Real>::max();
+      
+      for(int lev(coarselevel); lev <= finelevel; ++lev) {
+        // Get the MultiFab for this level and box
+        const AmrData &amrData = dataServicesPtr[framenumber]->AmrDataRef();
+        if (lev >= 0 && lev < amrData.FinestLevel() + 1) {
+          // Create a temporary MultiFab to hold the evaluated expression result
+          const BoxArray& ba = amrData.boxArray(lev);
+          const DistributionMapping& dm = amrData.DistributionMap(lev);
+          MultiFab result(ba, dm, 1, 0);
+          
+          // Evaluate the user expression
+          EvaluateUserExpression(currentderived, result, Vector<Box>(1, onBox[lev]), lev);
+          
+          // Compute min/max from the evaluated result
+          levMin = result.min(0);
+          levMax = result.max(0);
+          
+          rMin = min(rMin, levMin);
+          rMax = max(rMax, levMax);
+        }
+      }
+    } else {
+      // Standard AMR variable - use DataServices
+      std::cout << "DEBUG FindAndSetMinMax: Taking DataServices path" << std::endl;
+      rMin =  std::numeric_limits<Real>::max();
+      rMax = -std::numeric_limits<Real>::max();
+      for(int lev(coarselevel); lev <= finelevel; ++lev) {
+        bool minMaxValid(false);
+        DataServices::Dispatch(DataServices::MinMaxRequest,
+                               dataServicesPtr[framenumber],
+                               (void *) &(onBox[lev]),
+                               (void *) &(currentderived),
+                               lev, &levMin, &levMax, &minMaxValid);
+        if(minMaxValid) {
+          rMin = min(rMin, levMin);
+          rMax = max(rMax, levMax);
+        }
       }
     }
     if(bTimeline) {
@@ -2026,33 +2077,57 @@ void PltApp::ChangeDerived(Widget w, XtPointer client_data, XtPointer) {
   unsigned long derivedNumber = (unsigned long) client_data;
   int numberOfDerived(dataServicesPtr[currentFrame]->NumDeriveFunc());
   bool resetMinMax(false);
-  if(derivedNumber == numberOfDerived) {  // ---- this is a flag for resetting current derived
-    XtVaSetValues(w, XmNset, true, NULL);
+  
+  std::cout << "DEBUG ChangeDerived: derivedNumber=" << derivedNumber 
+            << ", numberOfDerived=" << numberOfDerived 
+            << ", baseNumDerived=" << baseNumDerived 
+            << ", userExpressionNames.size()=" << userExpressionNames.size() << std::endl;
+  
+  // Original reset logic - but this conflicts with user expressions when derivedNumber == numberOfDerived
+  // Disable this for now since user expressions start at baseNumDerived which equals numberOfDerived
+  // TODO: Find where this reset flag is used and fix the numbering scheme
+  if(false && derivedNumber == numberOfDerived) {  // ---- this is a flag for resetting current derived
     derivedNumber = pltAppState->CurrentDerivedNumber();
     resetMinMax = true;
-  } else {
-    XtVaSetValues(wCurrDerived, XmNset, false, NULL);
-    wCurrDerived = w;
+    std::cout << "DEBUG ChangeDerived: Reset flag detected, derivedNumber now=" << derivedNumber << std::endl;
   }
+  
+  // Ensure mutual exclusion by deselecting the current item first
+  if (wCurrDerived != None) {
+    XtVaSetValues(wCurrDerived, XmNset, false, NULL);
+  }
+  wCurrDerived = w;
+  
+  // Always set the new selection to true
+  XtVaSetValues(w, XmNset, true, NULL);
   string derivedName;
-  if (IsUserExpression(derivedNumber)) {
+  bool isUserExpr = IsUserExpression(derivedNumber);
+  std::cout << "DEBUG ChangeDerived: IsUserExpression(" << derivedNumber << ") = " << isUserExpr << std::endl;
+  
+  if (isUserExpr) {
     // This is a user expression
     int userExprIndex = derivedNumber - baseNumDerived;
+    std::cout << "DEBUG ChangeDerived: userExprIndex=" << userExprIndex 
+              << ", userExpressionNames.size()=" << userExpressionNames.size() << std::endl;
     if (userExprIndex >= 0 && userExprIndex < static_cast<int>(userExpressionNames.size())) {
       derivedName = userExpressionNames[userExprIndex];
+      std::cout << "DEBUG ChangeDerived: Set user expression name: '" << derivedName << "'" << std::endl;
     } else {
       // Invalid user expression index - fallback to first built-in
       derivedNumber = 0;
       derivedName = dataServicesPtr[currentFrame]->PlotVarNames()[0];
+      std::cout << "DEBUG ChangeDerived: Invalid user expr index, fallback to '" << derivedName << "'" << std::endl;
     }
   } else {
     // This is a built-in derived variable
     if (derivedNumber < baseNumDerived) {
       derivedName = dataServicesPtr[currentFrame]->PlotVarNames()[derivedNumber];
+      std::cout << "DEBUG ChangeDerived: Set built-in variable name: '" << derivedName << "'" << std::endl;
     } else {
       // Invalid index - fallback to first built-in
       derivedNumber = 0;
       derivedName = dataServicesPtr[currentFrame]->PlotVarNames()[0];
+      std::cout << "DEBUG ChangeDerived: Invalid built-in index, fallback to '" << derivedName << "'" << std::endl;
     }
   }
   pltAppState->SetCurrentDerived(derivedName, derivedNumber);
@@ -4527,8 +4602,13 @@ void PltApp::DoGlobalKeyPress(Widget, XtPointer, XtPointer call_data) {
   XKeyPressedEvent *event = (XKeyPressedEvent *) call_data;
   KeySym keysym = XLookupKeysym(event, 0);
   if(keysym == XK_Escape) {
-    // ESC key pressed - clear any existing selection
-    ClearSelection();
+    // Check if ExpressionDialog is open first
+    if (expressionDialog && expressionDialog->IsVisible()) {
+      expressionDialog->Hide();
+    } else {
+      // ESC key pressed - clear any existing selection
+      ClearSelection();
+    }
   }
 }
 
@@ -5302,14 +5382,24 @@ void PltApp::RefreshDerivedMenu() {
   
   // Calculate total number of variables (built-in + user expressions)
   int totalDerived = baseNumDerived + userExpressionNames.size();
+  
+  // Resize minMax array to accommodate user expressions
+  pltAppState->ResizeMinMaxForDerived(totalDerived);
   int maxMenuItems = initialMaxMenuItems;
   
   // Destroy existing menu items (but not the menu itself)
-  WidgetList children;
-  Cardinal numChildren;
+  WidgetList children = NULL;
+  Cardinal numChildren = 0;
   XtVaGetValues(wDerivedMenu, XmNchildren, &children, XmNnumChildren, &numChildren, NULL);
-  for (Cardinal i = 0; i < numChildren; i++) {
-    XtDestroyWidget(children[i]);
+  if (numChildren > 0) {
+    // First unmanage all children to remove them from the display
+    XtUnmanageChildren(children, numChildren);
+    // Then destroy them
+    for (Cardinal i = 0; i < numChildren; i++) {
+      if (children[i] != None && XtIsWidget(children[i])) {
+        XtDestroyWidget(children[i]);
+      }
+    }
   }
   
   // Update menu layout for new item count
@@ -5323,35 +5413,35 @@ void PltApp::RefreshDerivedMenu() {
   Widget wid;
   string currentDerived = pltAppState->CurrentDerived();
   wCurrDerived = None;
+  bool foundMatch = false;
   
+  // Create built-in derived variables
   for (int derived = 0; derived < baseNumDerived; ++derived) {
+    bool isSelected = !foundMatch && (derivedStrings[derived] == currentDerived);
     wid = XtVaCreateManagedWidget(derivedStrings[derived].c_str(),
                                   xmToggleButtonGadgetClass, wDerivedMenu,
-                                  XmNset, (derivedStrings[derived] == currentDerived), 
+                                  XmNset, isSelected, 
                                   NULL);
-    if (derivedStrings[derived] == currentDerived) {
+    if (isSelected) {
       wCurrDerived = wid;
+      foundMatch = true;
     }
     AddStaticCallback(wid, XmNvalueChangedCallback, &PltApp::ChangeDerived,
                       (XtPointer) static_cast<long>(derived));
   }
   
-  // Add separator if we have user expressions
-  if (!userExpressionNames.empty()) {
-    XtVaCreateManagedWidget(NULL, xmSeparatorGadgetClass, wDerivedMenu, NULL);
-  }
-  
-  // Add user expressions
+  // Add user expressions (no separator, no special suffix)
   for (int i = 0; i < userExpressionNames.size(); ++i) {
     int derivedIndex = baseNumDerived + i;
-    string displayName = userExpressionNames[i] + " (expr)";
     
-    wid = XtVaCreateManagedWidget(displayName.c_str(),
+    bool isSelected = !foundMatch && (userExpressionNames[i] == currentDerived);
+    wid = XtVaCreateManagedWidget(userExpressionNames[i].c_str(),
                                   xmToggleButtonGadgetClass, wDerivedMenu,
-                                  XmNset, (userExpressionNames[i] == currentDerived),
+                                  XmNset, isSelected,
                                   NULL);
-    if (userExpressionNames[i] == currentDerived) {
+    if (isSelected) {
       wCurrDerived = wid;
+      foundMatch = true;
     }
     AddStaticCallback(wid, XmNvalueChangedCallback, &PltApp::ChangeDerived,
                       (XtPointer) static_cast<long>(derivedIndex));
@@ -5363,14 +5453,16 @@ void PltApp::RefreshDerivedMenu() {
                                 wDerivedMenu, XmNmnemonic, 'U', NULL);
   AddStaticCallback(wid, XmNactivateCallback, &PltApp::DoExpressionDialog);
   
-  // If no current derived is set, default to first item
-  if (wCurrDerived == None && totalDerived > 0) {
+  // Only default to first item if no valid current derived exists in state
+  if (wCurrDerived == None && totalDerived > 0 && currentDerived.empty()) {
     WidgetList newChildren;
     Cardinal newNumChildren;
     XtVaGetValues(wDerivedMenu, XmNchildren, &newChildren, XmNnumChildren, &newNumChildren, NULL);
     if (newNumChildren > 0 && XmIsToggleButton(newChildren[0])) {
       wCurrDerived = newChildren[0];
       XtVaSetValues(wCurrDerived, XmNset, true, NULL);
+      // Update the application state to match the default selection
+      pltAppState->SetCurrentDerived(dataServicesPtr[currentFrame]->PlotVarNames()[0], 0);
     }
   }
 }

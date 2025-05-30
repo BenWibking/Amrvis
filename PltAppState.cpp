@@ -120,6 +120,15 @@ void PltAppState::SetMinMax(const Amrvis::MinMaxRangeType mmrangetype,
 			    const int framenumber, const int derivednumber,
 		            const Real rmin, const Real rmax)
 {
+  if (framenumber < 0 || framenumber >= minMax.size()) {
+    return;
+  }
+  if (derivednumber < 0 || derivednumber >= minMax[framenumber].size()) {
+    return;
+  }
+  if (mmrangetype < 0 || mmrangetype >= minMax[framenumber][derivednumber].size()) {
+    return;
+  }
   minMax[framenumber][derivednumber][mmrangetype].SetMinMax(rmin, rmax);
 }
 
@@ -129,6 +138,18 @@ void PltAppState::GetMinMax(const Amrvis::MinMaxRangeType mmrangetype,
 			    const int framenumber, const int derivednumber,
 		            Real &rmin, Real &rmax)
 {
+  if (framenumber < 0 || framenumber >= minMax.size()) {
+    rmin = rmax = 0.0;
+    return;
+  }
+  if (derivednumber < 0 || derivednumber >= minMax[framenumber].size()) {
+    rmin = rmax = 0.0;
+    return;
+  }
+  if (mmrangetype < 0 || mmrangetype >= minMax[framenumber][derivednumber].size()) {
+    rmin = rmax = 0.0;
+    return;
+  }
   minMax[framenumber][derivednumber][mmrangetype].GetMinMax(rmin, rmax);
 }
 
@@ -144,6 +165,15 @@ void PltAppState::GetMinMax(Real &rmin, Real &rmax) {
 bool PltAppState::IsSet(const Amrvis::MinMaxRangeType mmrangetype,
 			const int framenumber, const int derivednumber)
 {
+  if (framenumber < 0 || framenumber >= minMax.size()) {
+    return false;
+  }
+  if (derivednumber < 0 || derivednumber >= minMax[framenumber].size()) {
+    return false;
+  }
+  if (mmrangetype < 0 || mmrangetype >= minMax[framenumber][derivednumber].size()) {
+    return false;
+  }
   return (minMax[framenumber][derivednumber][mmrangetype].IsSet());
 }
 
@@ -166,6 +196,20 @@ void PltAppState::PrintSetMap() {
       cout << endl;
     }
     cout << endl;
+  }
+}
+
+
+// -------------------------------------------------------------------
+void PltAppState::ResizeMinMaxForDerived(int newNumDerived) {
+  for(int iframe(0); iframe < minMax.size(); ++iframe) {
+    int oldNumDerived = minMax[iframe].size();
+    if(newNumDerived > oldNumDerived) {
+      minMax[iframe].resize(newNumDerived);
+      for(int ider(oldNumDerived); ider < newNumDerived; ++ider) {
+        minMax[iframe][ider].resize(Amrvis::NUMBEROFMINMAX);
+      }
+    }
   }
 }
 
