@@ -9,6 +9,7 @@
 #include <Palette.H>
 #include <AMReX_DataServices.H>
 #include <ProjectionPicture.H>
+#include <ExpressionParser.H>
 
 using std::cout;
 using std::cerr;
@@ -860,11 +861,18 @@ void AmrPicture::APMakeImages(Palette *palptr) {
   const string currentDerived(pltAppStatePtr->CurrentDerived());
   const string vfracDerived("vfrac");
   for(int iLevel(minDrawnLevel); iLevel <= maxAllowableLevel; ++iLevel) {
-    amrex::DataServices::Dispatch(amrex::DataServices::FillVarOneFab, dataServicesPtr,
-		           (void *) (sliceFab[iLevel]),
-			   (void *) (&(sliceFab[iLevel]->box())),
-			   iLevel,
-			   (void *) &currentDerived);
+    // Check if this is a user expression
+    if (pltAppPtr->IsUserExpression(currentDerived)) {
+      // Handle user expression evaluation
+      FillUserExpressionData(sliceFab[iLevel], iLevel, currentDerived);
+    } else {
+      // Handle built-in derived variables
+      amrex::DataServices::Dispatch(amrex::DataServices::FillVarOneFab, dataServicesPtr,
+		             (void *) (sliceFab[iLevel]),
+			     (void *) (&(sliceFab[iLevel]->box())),
+			     iLevel,
+			     (void *) &currentDerived);
+    }
     if(amrData.CartGrid()) {
       BL_ASSERT(vfSliceFab[iLevel]->box() == sliceFab[iLevel]->box());
       amrex::DataServices::Dispatch(amrex::DataServices::FillVarOneFab, dataServicesPtr,
@@ -2529,5 +2537,74 @@ void AmrPicture::DrawVectorField(Display *pDisplay, Drawable &pDrawable,
     }
   }
 }
+
+// ---------------------------------------------------------------------
+void AmrPicture::FillUserExpressionData(FArrayBox* fab, int level, const string& expressionName) {
+    if (!pltAppPtr || !fab) {
+        return;
+    }
+    
+    ExpressionManager* exprManager = pltAppPtr->GetExpressionManager();
+    if (!exprManager) {
+        // If no expression manager, fill with placeholder data
+        fab->setVal(0.0);
+        return;
+    }
+    
+    const UserDerivedField* userField = exprManager->GetExpression(expressionName);
+    if (!userField) {
+        // If expression not found, fill with placeholder data
+        fab->setVal(0.0);
+        return;
+    }
+    
+    const Vector<string>& usedVars = userField->GetParser().GetUsedVariables();
+    if (usedVars.empty()) {
+        // No variables used - evaluate as constant expression
+        Real constantValue = userField->GetParser().EvaluateAt(Vector<Real>());
+        fab->setVal(constantValue);
+        return;
+    }
+    
+    // Create input data using FArrayBox for each variable
+    Vector<FArrayBox> inputFabs(usedVars.size());
+    
+    // Fill input data with the required variables
+    for (int varIdx = 0; varIdx < usedVars.size(); ++varIdx) {
+        const string& varName = usedVars[varIdx];
+        
+        // Initialize the FArrayBox for this variable
+        inputFabs[varIdx].resize(fab->box(), 1);
+        
+        // Use DataServices to fill this variable
+        amrex::DataServices::Dispatch(amrex::DataServices::FillVarOneFab, dataServicesPtr,
+                                     (void*)(&inputFabs[varIdx]),
+                                     (void*)(&inputFabs[varIdx].box()),
+                                     level,
+                                     (void*)(&varName));
+    }
+    
+    // Evaluate the expression point by point
+    const Box& box = fab->box();
+    const auto& targetArray = fab->array();
+    
+    // Create variable value arrays for each point
+    Vector<Real> varValues(usedVars.size());
+    
+    // Iterate through all points in the box
+    for (IntVect iv = box.smallEnd(); iv <= box.bigEnd(); box.next(iv)) {
+        // Get variable values at this point
+        for (int varIdx = 0; varIdx < usedVars.size(); ++varIdx) {
+            varValues[varIdx] = inputFabs[varIdx](iv, 0);
+        }
+        
+        // Evaluate expression at this point
+        Real result = userField->GetParser().EvaluateAt(varValues);
+        
+        // Store result
+        targetArray(iv, 0) = result;
+    }
+}
+
 // ---------------------------------------------------------------------
 // ---------------------------------------------------------------------

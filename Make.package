@@ -4,7 +4,8 @@ CEXE_headers += AmrPicture.H AmrvisConstants.H		\
                 GridPicture.H MessageArea.H				\
                 Palette.H PltApp.H Output.H Quaternion.H Point.H \
                 Trackball.H AMReX_XYPlotDataList.H XYPlotDefaults.H \
-		XYPlotWin.H XYPlotParam.H PltAppState.H AVPApp.H
+		XYPlotWin.H XYPlotParam.H PltAppState.H AVPApp.H \
+		ExpressionParser.H ExpressionDialog.H
 
 CEXE_sources += AmrPicture.cpp AmrVisTool.cpp		\
                 Dataset.cpp				\
@@ -13,7 +14,7 @@ CEXE_sources += AmrPicture.cpp AmrVisTool.cpp		\
                 GlobalUtilities.cpp Palette.cpp PltAppOutput.cpp	\
 		Output.cpp Quaternion.cpp Point.cpp Trackball.cpp       \
 		AMReX_XYPlotDataList.cpp XYPlotParam.cpp XYPlotWin.cpp        \
-		PltAppState.cpp AVPApp.cpp
+		PltAppState.cpp AVPApp.cpp ExpressionParser.cpp ExpressionDialog.cpp
 
 ifeq ($(DIM),3)
   ifeq ($(USE_VOLRENDER), TRUE)

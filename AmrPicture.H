@@ -81,6 +81,7 @@ class AmrPicture {
   void	SetDataServicesPtr(amrex::DataServices *tothis) { dataServicesPtr = tothis; } 
   void	SetHColor(int c)          { hColor = c; }
   void	SetVColor(int c)          { vColor = c; }
+  void  FillUserExpressionData(amrex::FArrayBox* fab, int level, const string& expressionName);
   const amrex::Box &GetSliceBox(int level) const { return sliceBox[level]; }
   int	GetMyView() const         { return myView; }
   const amrex::Vector<amrex::Box> &GetSubDomain() const { return subDomain; }

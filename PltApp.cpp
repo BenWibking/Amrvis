@@ -24,6 +24,7 @@
 #include <Xm/Frame.h>
 #include <Xm/ArrowB.h>
 #include <Xm/CascadeB.h>
+#include <Xm/ToggleB.h>
 
 #include <X11/cursorfont.h>
 #include <X11/keysym.h>
@@ -36,6 +37,8 @@
 #include <ProjectionPicture.H>
 #include <XYPlotWin.H>
 #include <MessageArea.H>
+#include <ExpressionParser.H>
+#include <ExpressionDialog.H>
 
 #if defined(BL_PARALLELVOLUMERENDER)
 #include <PVolRender.H>
@@ -96,6 +99,10 @@ PltApp::~PltApp() {
   if(datasetShowing) {
     delete datasetPtr;
   }
+  
+  // Clean up expression management
+  delete expressionDialog;
+  delete expressionManager;
   XtDestroyWidget(wAmrVisTopLevel);
 
   // delete all the call back parameter structs
@@ -1111,7 +1118,8 @@ void PltApp::PltAppInit(bool bSubVolume) {
   const Vector<string> &derivedStrings =
 	     dataServicesPtr[currentFrame]->PlotVarNames();
 
-  wMenuPulldown = XmCreatePulldownMenu(wMenuBar, const_cast<char *>("DerivedPulldown"), NULL, 0);
+  wDerivedMenu = XmCreatePulldownMenu(wMenuBar, const_cast<char *>("DerivedPulldown"), NULL, 0);
+  wMenuPulldown = wDerivedMenu;
   XtVaSetValues(wMenuPulldown,
 		XmNpacking, XmPACK_COLUMN,
 		XmNnumColumns, numberOfDerived / maxMenuItems +
@@ -1732,6 +1740,12 @@ void PltApp::PltAppInit(bool bSubVolume) {
 
   cbdPtrs.reserve(512);  // arbitrarily
   
+  // Initialize expression management
+  expressionManager = new ExpressionManager();
+  expressionManager->SetDataServices(dataServicesPtr[currentFrame]);
+  expressionDialog = new ExpressionDialog(wAmrVisTopLevel, this);
+  baseNumDerived = dataServicesPtr[currentFrame]->NumDeriveFunc();
+  
   if(bSubVolume) {
     //ChangeLevel(wTempDrawLevel, (XtPointer)(pltAppState->MaxDrawnLevel()), NULL);
     XtVaSetValues(wTempDrawLevel, XmNset, true, NULL);
@@ -2020,7 +2034,27 @@ void PltApp::ChangeDerived(Widget w, XtPointer client_data, XtPointer) {
     XtVaSetValues(wCurrDerived, XmNset, false, NULL);
     wCurrDerived = w;
   }
-  string derivedName = dataServicesPtr[currentFrame]->PlotVarNames()[derivedNumber];
+  string derivedName;
+  if (IsUserExpression(derivedNumber)) {
+    // This is a user expression
+    int userExprIndex = derivedNumber - baseNumDerived;
+    if (userExprIndex >= 0 && userExprIndex < static_cast<int>(userExpressionNames.size())) {
+      derivedName = userExpressionNames[userExprIndex];
+    } else {
+      // Invalid user expression index - fallback to first built-in
+      derivedNumber = 0;
+      derivedName = dataServicesPtr[currentFrame]->PlotVarNames()[0];
+    }
+  } else {
+    // This is a built-in derived variable
+    if (derivedNumber < baseNumDerived) {
+      derivedName = dataServicesPtr[currentFrame]->PlotVarNames()[derivedNumber];
+    } else {
+      // Invalid index - fallback to first built-in
+      derivedNumber = 0;
+      derivedName = dataServicesPtr[currentFrame]->PlotVarNames()[0];
+    }
+  }
   pltAppState->SetCurrentDerived(derivedName, derivedNumber);
 
   if ((bTimeline == true) && (derivedName != "timeline")){
@@ -5234,6 +5268,157 @@ void PltApp::SetReserveSystemColors(int reservesystemcolors) {
 void PltApp::SetExtraPaletteWidth(int extrapalettewidth) {
   extrapalettewidth = max(0, min(256, extrapalettewidth));  // arbitrarily
   PltApp::extraPaletteWidth = extrapalettewidth;
+}
+
+// -------------------------------------------------------------------
+// Expression Management Methods
+// -------------------------------------------------------------------
+
+void PltApp::DoExpressionDialog(Widget w, XtPointer, XtPointer) {
+  amrex::ignore_unused(w);
+  ShowExpressionDialog();
+}
+
+void PltApp::ShowExpressionDialog() {
+  if (expressionDialog) {
+    expressionDialog->Show();
+  }
+}
+
+void PltApp::RefreshDerivedMenu() {
+  if (!expressionManager || wDerivedMenu == None) {
+    return;
+  }
+  
+  // Update expression manager with current data
+  expressionManager->SetDataServices(dataServicesPtr[currentFrame]);
+  
+  // Get current derived variable info
+  const Vector<string> &derivedStrings = dataServicesPtr[currentFrame]->PlotVarNames();
+  const Vector<string> &userExprNames = expressionManager->GetExpressionNames();
+  
+  // Update our mapping
+  userExpressionNames = userExprNames;
+  
+  // Calculate total number of variables (built-in + user expressions)
+  int totalDerived = baseNumDerived + userExpressionNames.size();
+  int maxMenuItems = initialMaxMenuItems;
+  
+  // Destroy existing menu items (but not the menu itself)
+  WidgetList children;
+  Cardinal numChildren;
+  XtVaGetValues(wDerivedMenu, XmNchildren, &children, XmNnumChildren, &numChildren, NULL);
+  for (Cardinal i = 0; i < numChildren; i++) {
+    XtDestroyWidget(children[i]);
+  }
+  
+  // Update menu layout for new item count
+  XtVaSetValues(wDerivedMenu,
+                XmNpacking, XmPACK_COLUMN,
+                XmNnumColumns, totalDerived / maxMenuItems + 
+                              ((totalDerived % maxMenuItems == 0) ? 0 : 1), 
+                NULL);
+  
+  // Recreate built-in derived variables
+  Widget wid;
+  string currentDerived = pltAppState->CurrentDerived();
+  wCurrDerived = None;
+  
+  for (int derived = 0; derived < baseNumDerived; ++derived) {
+    wid = XtVaCreateManagedWidget(derivedStrings[derived].c_str(),
+                                  xmToggleButtonGadgetClass, wDerivedMenu,
+                                  XmNset, (derivedStrings[derived] == currentDerived), 
+                                  NULL);
+    if (derivedStrings[derived] == currentDerived) {
+      wCurrDerived = wid;
+    }
+    AddStaticCallback(wid, XmNvalueChangedCallback, &PltApp::ChangeDerived,
+                      (XtPointer) static_cast<long>(derived));
+  }
+  
+  // Add separator if we have user expressions
+  if (!userExpressionNames.empty()) {
+    XtVaCreateManagedWidget(NULL, xmSeparatorGadgetClass, wDerivedMenu, NULL);
+  }
+  
+  // Add user expressions
+  for (int i = 0; i < userExpressionNames.size(); ++i) {
+    int derivedIndex = baseNumDerived + i;
+    string displayName = userExpressionNames[i] + " (expr)";
+    
+    wid = XtVaCreateManagedWidget(displayName.c_str(),
+                                  xmToggleButtonGadgetClass, wDerivedMenu,
+                                  XmNset, (userExpressionNames[i] == currentDerived),
+                                  NULL);
+    if (userExpressionNames[i] == currentDerived) {
+      wCurrDerived = wid;
+    }
+    AddStaticCallback(wid, XmNvalueChangedCallback, &PltApp::ChangeDerived,
+                      (XtPointer) static_cast<long>(derivedIndex));
+  }
+  
+  // Add the "User Expressions..." menu item at the bottom
+  XtVaCreateManagedWidget(NULL, xmSeparatorGadgetClass, wDerivedMenu, NULL);
+  wid = XtVaCreateManagedWidget("User Expressions...", xmPushButtonGadgetClass,
+                                wDerivedMenu, XmNmnemonic, 'U', NULL);
+  AddStaticCallback(wid, XmNactivateCallback, &PltApp::DoExpressionDialog);
+  
+  // If no current derived is set, default to first item
+  if (wCurrDerived == None && totalDerived > 0) {
+    WidgetList newChildren;
+    Cardinal newNumChildren;
+    XtVaGetValues(wDerivedMenu, XmNchildren, &newChildren, XmNnumChildren, &newNumChildren, NULL);
+    if (newNumChildren > 0 && XmIsToggleButton(newChildren[0])) {
+      wCurrDerived = newChildren[0];
+      XtVaSetValues(wCurrDerived, XmNset, true, NULL);
+    }
+  }
+}
+
+bool PltApp::IsUserExpression(int derivedNumber) const {
+  return derivedNumber >= baseNumDerived && 
+         derivedNumber < (baseNumDerived + static_cast<int>(userExpressionNames.size()));
+}
+
+bool PltApp::IsUserExpression(const string& name) const {
+  if (!expressionManager) return false;
+  return expressionManager->GetExpression(name) != nullptr;
+}
+
+void PltApp::EvaluateUserExpression(const string& expressionName, MultiFab& result, 
+                                    const Vector<Box>& validBoxes, int level) const {
+  if (!expressionManager) {
+    return;
+  }
+  
+  // Get the data for this level from DataServices
+  const AmrData &amrData = dataServicesPtr[currentFrame]->AmrDataRef();
+  const Vector<string> &varNames = dataServicesPtr[currentFrame]->PlotVarNames();
+  
+  // Create MultiFab with all the input variables needed for the expression
+  const UserDerivedField* userField = expressionManager->GetExpression(expressionName);
+  if (!userField) {
+    return;
+  }
+  
+  const Vector<string>& usedVars = userField->GetParser().GetUsedVariables();
+  if (usedVars.empty()) {
+    return;
+  }
+  
+  // For now, create a simple MultiFab with the available variables
+  // This is a simplified implementation - full integration would require
+  // more sophisticated data management from DataServices
+  
+  // Create input MultiFab with the same layout as result
+  MultiFab inputData(result.boxArray(), result.DistributionMap(), usedVars.size(), 0);
+  
+  // Fill input data - this is where we'd need to get actual data from DataServices
+  // For now, we'll create placeholder data
+  inputData.setVal(1.0); // Placeholder
+  
+  // Evaluate the expression
+  expressionManager->EvaluateExpression(expressionName, inputData, result);
 }
 
 // -------------------------------------------------------------------

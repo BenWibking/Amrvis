@@ -35,6 +35,8 @@ class GraphicsAttributes;
 class PltAppState;
 class XYPlotParameters;
 class XYPlotWin;
+class ExpressionManager;
+class ExpressionDialog;
 
 
 namespace {
@@ -129,6 +131,15 @@ public:
   string GetRegionName(Real r);
   bool IsTimeline() const { return bTimeline; }
   bool IsRegions() const  { return bRegions; }
+  
+  // Expression management
+  ExpressionManager* GetExpressionManager() const { return expressionManager; }
+  void RefreshDerivedMenu();
+  void ShowExpressionDialog();
+  bool IsUserExpression(int derivedNumber) const;
+  bool IsUserExpression(const string& name) const;
+  void EvaluateUserExpression(const string& expressionName, amrex::MultiFab& result, 
+                              const amrex::Vector<amrex::Box>& validBoxes, int level) const;
 
 #if (BL_SPACEDIM == 3)
   void DoExposeTransDA(Widget = None, XtPointer = NULL, XtPointer = NULL);
@@ -154,6 +165,7 @@ private:
   Widget wLocArea, wPlotArea;
   Widget wControls[WCN];
   Widget wCurrScale, wCurrLevel, wCurrDerived;
+  Widget wDerivedMenu;  // The derived variables pulldown menu
   Widget wPlotLabel, wContourLabel;
 
 #if (BL_SPACEDIM == 3)
@@ -208,6 +220,12 @@ private:
   Display *display;
   //GC xgc;
   bool bFileRangeButtonSet, bSyncFrame;
+  
+  // Expression management
+  ExpressionManager *expressionManager;
+  ExpressionDialog *expressionDialog;
+  amrex::Vector<string> userExpressionNames;  // Maps user expression indices to names
+  int baseNumDerived;  // Number of built-in derived variables
   void DoToggleFileRangeButton(Widget, XtPointer, XtPointer);
   
   // baggage for fast rubber banding
@@ -254,6 +272,7 @@ private:
   void DoLogScaleButton(Widget, XtPointer, XtPointer);
   void DoCGSmoothing(Widget, XtPointer, XtPointer);
   void DoCGShowBody(Widget, XtPointer, XtPointer);
+  void DoExpressionDialog(Widget, XtPointer, XtPointer);
   void DoAnimBackStep();
   void DoAnimForwardStep();
   void DoAnimFileScale(Widget, XtPointer, XtPointer);
