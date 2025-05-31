@@ -59,6 +59,17 @@ private:
     Widget wVariableList;
     Widget wVariableScrolled;
     
+    // User expressions management area
+    Widget wUserExprFrame;
+    Widget wUserExprForm;
+    Widget wUserExprLabel;
+    Widget wUserExprList;
+    Widget wUserExprScrolled;
+    Widget wUserExprButtonForm;
+    Widget wLoadButton;
+    Widget wModifyButton;
+    Widget wDeleteButton;
+    
     // Status and validation area
     Widget wStatusFrame;
     Widget wStatusForm;
@@ -76,15 +87,19 @@ private:
     bool isVisible;
     ExpressionManager* expressionManager;
     amrex::Vector<string> availableVariables;
+    string selectedExpressionName;
     
     // Helper methods
     void CreateDialog();
     void CreateExpressionArea();
     void CreateVariableArea();
+    void CreateUserExpressionArea();
     void CreateStatusArea();
     void CreateButtons();
     void UpdateStatus(const string& message, bool isError = false);
     void PopulateVariableList();
+    void PopulateUserExpressionList();
+    void RefreshUserExpressionList();
     
     // Callback methods
     static void CBValidateExpression(Widget w, XtPointer clientData, XtPointer callData);
@@ -93,6 +108,10 @@ private:
     static void CBCloseDialog(Widget w, XtPointer clientData, XtPointer callData);
     static void CBVariableSelected(Widget w, XtPointer clientData, XtPointer callData);
     static void CBExpressionChanged(Widget w, XtPointer clientData, XtPointer callData);
+    static void CBUserExpressionSelected(Widget w, XtPointer clientData, XtPointer callData);
+    static void CBLoadExpression(Widget w, XtPointer clientData, XtPointer callData);
+    static void CBModifyExpression(Widget w, XtPointer clientData, XtPointer callData);
+    static void CBDeleteExpression(Widget w, XtPointer clientData, XtPointer callData);
     
     // Internal callback implementations
     void ValidateExpression();
@@ -101,6 +120,10 @@ private:
     void CloseDialog();
     void VariableSelected(int selectedIndex);
     void ExpressionChanged();
+    void UserExpressionSelected(int selectedIndex);
+    void LoadExpression();
+    void ModifyExpression();
+    void DeleteExpression();
     
     // Utility methods
     string GetExpressionText() const;
@@ -108,6 +131,8 @@ private:
     void SetExpressionText(const string& text);
     void SetNameText(const string& text);
     void InsertVariableAtCursor(const string& varName);
+    string GetSelectedUserExpression() const;
+    void EnableUserExpressionButtons(bool enable);
 };
 
 #endif

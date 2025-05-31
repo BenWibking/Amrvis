@@ -837,6 +837,19 @@ void PltApp::DoRender(Widget, XtPointer, XtPointer) {
 
   VolRender *volRender = projPicturePtr->GetVolRenderPtr();
   if( ! volRender->SWFDataValid()) {
+    // Check if the current derived variable is a user expression
+    const string currentDerived = pltAppState->CurrentDerived();
+    bool isUserExpr = IsUserExpression(pltAppState->CurrentDerivedNumber());
+    
+    if (isUserExpr) {
+      // Volume rendering with user expressions is not currently supported
+      cerr << "Error: Volume rendering with user expressions ('" << currentDerived 
+           << "') is not currently supported." << endl;
+      cerr << "Please select a built-in variable for volume rendering." << endl;
+      showing3dRender = false;
+      return;
+    }
+    
     int iPaletteStart = pltPaletteptr->PaletteStart();
     int iPaletteEnd   = pltPaletteptr->PaletteEnd();
     int iBlackIndex   = pltPaletteptr->BlackIndex();
@@ -847,7 +860,7 @@ void PltApp::DoRender(Widget, XtPointer, XtPointer) {
 
     volRender->MakeSWFData(dataServicesPtr[currentFrame],
 			   minUsing, maxUsing,
-			   pltAppState->CurrentDerived(), 
+			   currentDerived, 
 			   iPaletteStart, iPaletteEnd,
 			   iBlackIndex, iWhiteIndex,
 			   iColorSlots, pltAppState->GetShowingBoxes());

@@ -38,7 +38,8 @@ ExpressionDialog::ExpressionDialog(Widget parent, PltApp* pltApp)
       parentApp(pltApp),
       wDialogShell(None),
       isVisible(false),
-      expressionManager(nullptr)
+      expressionManager(nullptr),
+      selectedExpressionName("")
 {
     CreateDialog();
 }
@@ -62,6 +63,7 @@ void ExpressionDialog::Show()
         }
         
         RefreshVariableList();
+        RefreshUserExpressionList();
         isVisible = true;
         UpdateStatus("Enter a mathematical expression using available variables", false);
     }
@@ -93,6 +95,13 @@ void ExpressionDialog::RefreshVariableList()
     }
 }
 
+void ExpressionDialog::RefreshUserExpressionList()
+{
+    if (parentApp && parentApp->GetExpressionManager()) {
+        PopulateUserExpressionList();
+    }
+}
+
 void ExpressionDialog::CreateDialog()
 {
     Arg args[20];
@@ -120,6 +129,7 @@ void ExpressionDialog::CreateDialog()
     
     CreateExpressionArea();
     CreateVariableArea();
+    CreateUserExpressionArea();
     CreateStatusArea();
     CreateButtons();
     
@@ -258,6 +268,116 @@ void ExpressionDialog::CreateVariableArea()
     XtManageChild(wVariableFrame);
 }
 
+void ExpressionDialog::CreateUserExpressionArea()
+{
+    Arg args[20];
+    int n;
+    
+    // User expressions frame
+    n = 0;
+    XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+    XtSetArg(args[n], XmNtopWidget, wVariableFrame); n++;
+    XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNmarginWidth, 5); n++;
+    XtSetArg(args[n], XmNmarginHeight, 5); n++;
+    XtSetArg(args[n], XmNmarginTop, 5); n++;
+    wUserExprFrame = XmCreateFrame(wMainForm, const_cast<char*>("userExprFrame"), args, n);
+    
+    // User expressions form inside frame
+    n = 0;
+    wUserExprForm = XmCreateForm(wUserExprFrame, const_cast<char*>("userExprForm"), args, n);
+    
+    // User expressions label
+    n = 0;
+    XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNmarginTop, 10); n++;
+    XtSetArg(args[n], XmNmarginLeft, 10); n++;
+    XmString labelStr = XmStringCreateSimple(const_cast<char*>("User Expressions (select to modify/delete):"));
+    XtSetArg(args[n], XmNlabelString, labelStr); n++;
+    wUserExprLabel = XmCreateLabel(wUserExprForm, const_cast<char*>("userExprLabel"), args, n);
+    XmStringFree(labelStr);
+    
+    // User expressions list (scrolled)
+    n = 0;
+    XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+    XtSetArg(args[n], XmNtopWidget, wUserExprLabel); n++;
+    XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNmarginLeft, 10); n++;
+    XtSetArg(args[n], XmNmarginRight, 10); n++;
+    XtSetArg(args[n], XmNmarginTop, 5); n++;
+    XtSetArg(args[n], XmNvisibleItemCount, 4); n++;
+    XtSetArg(args[n], XmNselectionPolicy, XmSINGLE_SELECT); n++;
+    wUserExprList = XmCreateScrolledList(wUserExprForm, const_cast<char*>("userExprList"), args, n);
+    XtAddCallback(wUserExprList, XmNsingleSelectionCallback, CBUserExpressionSelected, (XtPointer) this);
+    
+    // Button form for user expression management
+    n = 0;
+    XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+    XtSetArg(args[n], XmNtopWidget, XtParent(wUserExprList)); n++;
+    XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNbottomAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNmarginLeft, 10); n++;
+    XtSetArg(args[n], XmNmarginRight, 10); n++;
+    XtSetArg(args[n], XmNmarginTop, 5); n++;
+    XtSetArg(args[n], XmNmarginBottom, 10); n++;
+    wUserExprButtonForm = XmCreateForm(wUserExprForm, const_cast<char*>("userExprButtonForm"), args, n);
+    
+    // Load button
+    n = 0;
+    XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNwidth, 80); n++;
+    labelStr = XmStringCreateSimple(const_cast<char*>("Load"));
+    XtSetArg(args[n], XmNlabelString, labelStr); n++;
+    wLoadButton = XmCreatePushButton(wUserExprButtonForm, const_cast<char*>("loadButton"), args, n);
+    XmStringFree(labelStr);
+    XtAddCallback(wLoadButton, XmNactivateCallback, CBLoadExpression, (XtPointer) this);
+    
+    // Modify button
+    n = 0;
+    XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNleftAttachment, XmATTACH_WIDGET); n++;
+    XtSetArg(args[n], XmNleftWidget, wLoadButton); n++;
+    XtSetArg(args[n], XmNleftOffset, 10); n++;
+    XtSetArg(args[n], XmNwidth, 80); n++;
+    labelStr = XmStringCreateSimple(const_cast<char*>("Modify"));
+    XtSetArg(args[n], XmNlabelString, labelStr); n++;
+    wModifyButton = XmCreatePushButton(wUserExprButtonForm, const_cast<char*>("modifyButton"), args, n);
+    XmStringFree(labelStr);
+    XtAddCallback(wModifyButton, XmNactivateCallback, CBModifyExpression, (XtPointer) this);
+    
+    // Delete button
+    n = 0;
+    XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNleftAttachment, XmATTACH_WIDGET); n++;
+    XtSetArg(args[n], XmNleftWidget, wModifyButton); n++;
+    XtSetArg(args[n], XmNleftOffset, 10); n++;
+    XtSetArg(args[n], XmNwidth, 80); n++;
+    labelStr = XmStringCreateSimple(const_cast<char*>("Delete"));
+    XtSetArg(args[n], XmNlabelString, labelStr); n++;
+    wDeleteButton = XmCreatePushButton(wUserExprButtonForm, const_cast<char*>("deleteButton"), args, n);
+    XmStringFree(labelStr);
+    XtAddCallback(wDeleteButton, XmNactivateCallback, CBDeleteExpression, (XtPointer) this);
+    
+    // Initially disable the buttons until an expression is selected
+    XtSetSensitive(wLoadButton, False);
+    XtSetSensitive(wModifyButton, False);
+    XtSetSensitive(wDeleteButton, False);
+    
+    XtManageChild(wUserExprLabel);
+    XtManageChild(wUserExprList);
+    XtManageChild(wLoadButton);
+    XtManageChild(wModifyButton);
+    XtManageChild(wDeleteButton);
+    XtManageChild(wUserExprButtonForm);
+    XtManageChild(wUserExprForm);
+    XtManageChild(wUserExprFrame);
+}
+
 void ExpressionDialog::CreateStatusArea()
 {
     Arg args[20];
@@ -266,7 +386,7 @@ void ExpressionDialog::CreateStatusArea()
     // Status frame
     n = 0;
     XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
-    XtSetArg(args[n], XmNtopWidget, wVariableFrame); n++;
+    XtSetArg(args[n], XmNtopWidget, wUserExprFrame); n++;
     XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
     XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
     XtSetArg(args[n], XmNmarginWidth, 5); n++;
@@ -415,6 +535,32 @@ void ExpressionDialog::PopulateVariableList()
     }
 }
 
+void ExpressionDialog::PopulateUserExpressionList()
+{
+    if (wUserExprList == None || !parentApp || !parentApp->GetExpressionManager()) return;
+    
+    // Clear existing items
+    XmListDeleteAllItems(wUserExprList);
+    
+    // Clear selection state
+    selectedExpressionName = "";
+    EnableUserExpressionButtons(false);
+    
+    // Get user expression names from the expression manager
+    const amrex::Vector<string>& expressionNames = parentApp->GetExpressionManager()->GetExpressionNames();
+    
+    // Add expressions to list with format "name: expression"
+    for (const auto& name : expressionNames) {
+        const UserDerivedField* field = parentApp->GetExpressionManager()->GetExpression(name);
+        if (field) {
+            string listItem = name + ": " + field->GetExpression();
+            XmString xmStr = XmStringCreateSimple(const_cast<char*>(listItem.c_str()));
+            XmListAddItem(wUserExprList, xmStr, 0);
+            XmStringFree(xmStr);
+        }
+    }
+}
+
 // ===============================
 // Callback Methods
 // ===============================
@@ -462,6 +608,35 @@ void ExpressionDialog::CBExpressionChanged(Widget w, XtPointer clientData, XtPoi
     dialog->ExpressionChanged();
 }
 
+void ExpressionDialog::CBUserExpressionSelected(Widget w, XtPointer clientData, XtPointer callData)
+{
+    amrex::ignore_unused(w);
+    ExpressionDialog* dialog = static_cast<ExpressionDialog*>(clientData);
+    XmListCallbackStruct* cbs = static_cast<XmListCallbackStruct*>(callData);
+    dialog->UserExpressionSelected(cbs->item_position - 1); // Convert to 0-based index
+}
+
+void ExpressionDialog::CBLoadExpression(Widget w, XtPointer clientData, XtPointer callData)
+{
+    amrex::ignore_unused(w, callData);
+    ExpressionDialog* dialog = static_cast<ExpressionDialog*>(clientData);
+    dialog->LoadExpression();
+}
+
+void ExpressionDialog::CBModifyExpression(Widget w, XtPointer clientData, XtPointer callData)
+{
+    amrex::ignore_unused(w, callData);
+    ExpressionDialog* dialog = static_cast<ExpressionDialog*>(clientData);
+    dialog->ModifyExpression();
+}
+
+void ExpressionDialog::CBDeleteExpression(Widget w, XtPointer clientData, XtPointer callData)
+{
+    amrex::ignore_unused(w, callData);
+    ExpressionDialog* dialog = static_cast<ExpressionDialog*>(clientData);
+    dialog->DeleteExpression();
+}
+
 // ===============================
 // Internal Callback Implementations
 // ===============================
@@ -506,6 +681,7 @@ void ExpressionDialog::AddExpression()
         if (success) {
             UpdateStatus("Expression '" + name + "' added successfully", false);
             ClearExpression();
+            RefreshUserExpressionList();
             // Notify parent app to refresh derived variable menu
             parentApp->RefreshDerivedMenu();
         } else {
@@ -539,6 +715,122 @@ void ExpressionDialog::VariableSelected(int selectedIndex)
 void ExpressionDialog::ExpressionChanged()
 {
     UpdateStatus("Expression modified", false);
+}
+
+void ExpressionDialog::UserExpressionSelected(int selectedIndex)
+{
+    if (!parentApp || !parentApp->GetExpressionManager()) return;
+    
+    const amrex::Vector<string>& expressionNames = parentApp->GetExpressionManager()->GetExpressionNames();
+    
+    if (selectedIndex >= 0 && selectedIndex < static_cast<int>(expressionNames.size())) {
+        selectedExpressionName = expressionNames[selectedIndex];
+        EnableUserExpressionButtons(true);
+        UpdateStatus("Selected expression: " + selectedExpressionName, false);
+    } else {
+        selectedExpressionName = "";
+        EnableUserExpressionButtons(false);
+        UpdateStatus("No expression selected", false);
+    }
+}
+
+void ExpressionDialog::LoadExpression()
+{
+    if (selectedExpressionName.empty() || !parentApp || !parentApp->GetExpressionManager()) {
+        UpdateStatus("No expression selected to load", true);
+        return;
+    }
+    
+    const UserDerivedField* field = parentApp->GetExpressionManager()->GetExpression(selectedExpressionName);
+    if (field) {
+        SetNameText(selectedExpressionName);
+        SetExpressionText(field->GetExpression());
+        UpdateStatus("Loaded expression '" + selectedExpressionName + "' for editing", false);
+    } else {
+        UpdateStatus("Failed to load expression", true);
+    }
+}
+
+void ExpressionDialog::ModifyExpression()
+{
+    if (selectedExpressionName.empty()) {
+        UpdateStatus("No expression selected to modify", true);
+        return;
+    }
+    
+    string expr = GetExpressionText();
+    string name = GetNameText();
+    
+    if (expr.empty()) {
+        UpdateStatus("Enter an expression first", true);
+        return;
+    }
+    
+    if (name.empty()) {
+        UpdateStatus("Enter a name for the expression", true);
+        return;
+    }
+    
+    if (!parentApp || !parentApp->GetExpressionManager()) {
+        UpdateStatus("Expression manager not available", true);
+        return;
+    }
+    
+    // If the name changed, we need to delete the old one and add the new one
+    bool nameChanged = (name != selectedExpressionName);
+    
+    if (nameChanged) {
+        // Remove the old expression
+        parentApp->GetExpressionManager()->RemoveExpression(selectedExpressionName);
+    }
+    
+    // Add/update the expression
+    bool success = parentApp->GetExpressionManager()->AddExpression(name, expr);
+    if (success) {
+        UpdateStatus("Expression '" + name + "' modified successfully", false);
+        selectedExpressionName = name;
+        ClearExpression();
+        RefreshUserExpressionList();
+        // Notify parent app to refresh derived variable menu
+        parentApp->RefreshDerivedMenu();
+    } else {
+        // If the name changed and we failed to add the new one, try to restore the old one
+        if (nameChanged) {
+            const UserDerivedField* oldField = parentApp->GetExpressionManager()->GetExpression(selectedExpressionName);
+            if (!oldField) {
+                // Try to restore with the original expression (this might fail if we can't get it back)
+                UpdateStatus("Failed to modify expression and original was lost", true);
+                RefreshUserExpressionList();
+                return;
+            }
+        }
+        UpdateStatus("Failed to modify expression - check syntax and variable names", true);
+    }
+}
+
+void ExpressionDialog::DeleteExpression()
+{
+    if (selectedExpressionName.empty()) {
+        UpdateStatus("No expression selected to delete", true);
+        return;
+    }
+    
+    if (!parentApp || !parentApp->GetExpressionManager()) {
+        UpdateStatus("Expression manager not available", true);
+        return;
+    }
+    
+    bool success = parentApp->GetExpressionManager()->RemoveExpression(selectedExpressionName);
+    if (success) {
+        UpdateStatus("Expression '" + selectedExpressionName + "' deleted successfully", false);
+        selectedExpressionName = "";
+        EnableUserExpressionButtons(false);
+        RefreshUserExpressionList();
+        // Notify parent app to refresh derived variable menu
+        parentApp->RefreshDerivedMenu();
+    } else {
+        UpdateStatus("Failed to delete expression", true);
+    }
 }
 
 // ===============================
@@ -591,4 +883,22 @@ void ExpressionDialog::InsertVariableAtCursor(const string& varName)
     XmTextSetHighlight(wExpressionText, cursorPos, cursorPos + varName.length(), XmHIGHLIGHT_SELECTED);
     
     UpdateStatus("Variable '" + varName + "' inserted", false);
+}
+
+string ExpressionDialog::GetSelectedUserExpression() const
+{
+    return selectedExpressionName;
+}
+
+void ExpressionDialog::EnableUserExpressionButtons(bool enable)
+{
+    if (wLoadButton != None) {
+        XtSetSensitive(wLoadButton, enable);
+    }
+    if (wModifyButton != None) {
+        XtSetSensitive(wModifyButton, enable);
+    }
+    if (wDeleteButton != None) {
+        XtSetSensitive(wDeleteButton, enable);
+    }
 }
