@@ -19,6 +19,7 @@
 #include <Xm/Separator.h>
 #include <Xm/Protocols.h>
 #include <Xm/AtomMgr.h>
+#include <Xm/SelectioB.h>
 
 #include <iostream>
 #include <sstream>
@@ -363,6 +364,32 @@ void ExpressionDialog::CreateUserExpressionArea()
     XmStringFree(labelStr);
     XtAddCallback(wDeleteButton, XmNactivateCallback, CBDeleteExpression, (XtPointer) this);
     
+    // Import button
+    n = 0;
+    XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNleftAttachment, XmATTACH_WIDGET); n++;
+    XtSetArg(args[n], XmNleftWidget, wDeleteButton); n++;
+    XtSetArg(args[n], XmNleftOffset, 20); n++; // Extra space
+    XtSetArg(args[n], XmNwidth, 80); n++;
+    labelStr = XmStringCreateSimple(const_cast<char*>("Import"));
+    XtSetArg(args[n], XmNlabelString, labelStr); n++;
+    wImportButton = XmCreatePushButton(wUserExprButtonForm, const_cast<char*>("importButton"), args, n);
+    XmStringFree(labelStr);
+    XtAddCallback(wImportButton, XmNactivateCallback, CBImportCSV, (XtPointer) this);
+    
+    // Export button
+    n = 0;
+    XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+    XtSetArg(args[n], XmNleftAttachment, XmATTACH_WIDGET); n++;
+    XtSetArg(args[n], XmNleftWidget, wImportButton); n++;
+    XtSetArg(args[n], XmNleftOffset, 10); n++;
+    XtSetArg(args[n], XmNwidth, 80); n++;
+    labelStr = XmStringCreateSimple(const_cast<char*>("Export"));
+    XtSetArg(args[n], XmNlabelString, labelStr); n++;
+    wExportButton = XmCreatePushButton(wUserExprButtonForm, const_cast<char*>("exportButton"), args, n);
+    XmStringFree(labelStr);
+    XtAddCallback(wExportButton, XmNactivateCallback, CBExportCSV, (XtPointer) this);
+    
     // Initially disable the buttons until an expression is selected
     XtSetSensitive(wLoadButton, False);
     XtSetSensitive(wModifyButton, False);
@@ -373,6 +400,8 @@ void ExpressionDialog::CreateUserExpressionArea()
     XtManageChild(wLoadButton);
     XtManageChild(wModifyButton);
     XtManageChild(wDeleteButton);
+    XtManageChild(wImportButton);
+    XtManageChild(wExportButton);
     XtManageChild(wUserExprButtonForm);
     XtManageChild(wUserExprForm);
     XtManageChild(wUserExprFrame);
@@ -635,6 +664,20 @@ void ExpressionDialog::CBDeleteExpression(Widget w, XtPointer clientData, XtPoin
     amrex::ignore_unused(w, callData);
     ExpressionDialog* dialog = static_cast<ExpressionDialog*>(clientData);
     dialog->DeleteExpression();
+}
+
+void ExpressionDialog::CBImportCSV(Widget w, XtPointer clientData, XtPointer callData)
+{
+    amrex::ignore_unused(w, callData);
+    ExpressionDialog* dialog = static_cast<ExpressionDialog*>(clientData);
+    dialog->ImportCSV();
+}
+
+void ExpressionDialog::CBExportCSV(Widget w, XtPointer clientData, XtPointer callData)
+{
+    amrex::ignore_unused(w, callData);
+    ExpressionDialog* dialog = static_cast<ExpressionDialog*>(clientData);
+    dialog->ExportCSV();
 }
 
 // ===============================
@@ -901,4 +944,153 @@ void ExpressionDialog::EnableUserExpressionButtons(bool enable)
     if (wDeleteButton != None) {
         XtSetSensitive(wDeleteButton, enable);
     }
+}
+
+void ExpressionDialog::ImportCSV()
+{
+    if (!parentApp || !parentApp->GetExpressionManager()) {
+        UpdateStatus("Expression manager not available", true);
+        return;
+    }
+    
+    // Create a simple prompt dialog to get filename
+    Arg args[10];
+    int n = 0;
+    
+    XmString titleStr = XmStringCreateSimple(const_cast<char*>("Import Expressions"));
+    XmString labelStr = XmStringCreateSimple(const_cast<char*>("Enter CSV filename:"));
+    XmString defaultStr = XmStringCreateSimple(const_cast<char*>("expressions.csv"));
+    
+    XtSetArg(args[n], XmNdialogTitle, titleStr); n++;
+    XtSetArg(args[n], XmNselectionLabelString, labelStr); n++;
+    XtSetArg(args[n], XmNtextString, defaultStr); n++;
+    
+    Widget promptDialog = XmCreateSelectionDialog(wDialogShell, 
+        const_cast<char*>("importDialog"), args, n);
+        
+    XmStringFree(titleStr);
+    XmStringFree(labelStr);
+    XmStringFree(defaultStr);
+    
+    // Remove Help button
+    XtUnmanageChild(XmSelectionBoxGetChild(promptDialog, XmDIALOG_HELP_BUTTON));
+    
+    // Add callbacks for OK and Cancel
+    XtAddCallback(promptDialog, XmNokCallback, 
+        [](Widget w, XtPointer clientData, XtPointer callData) {
+            ExpressionDialog* dialog = static_cast<ExpressionDialog*>(clientData);
+            XmSelectionBoxCallbackStruct* cbs = static_cast<XmSelectionBoxCallbackStruct*>(callData);
+            
+            char* importFilename;
+            if (!XmStringGetLtoR(cbs->value, XmFONTLIST_DEFAULT_TAG, &importFilename)) {
+                dialog->UpdateStatus("Failed to get filename", true);
+                XtUnmanageChild(w);
+                return;
+            }
+            
+            if (importFilename && strlen(importFilename) > 0) {
+                ExpressionManager* manager = dialog->parentApp->GetExpressionManager();
+                
+                // Check how many expressions are in the file
+                int count = manager->CountCSVExpressions(importFilename);
+                if (count < 0) {
+                    dialog->UpdateStatus("Failed to read CSV file: " + string(importFilename), true);
+                } else if (count == 0) {
+                    dialog->UpdateStatus("No valid expressions found in CSV file", true);
+                } else {
+                    // Import with replace existing = false by default
+                    bool success = manager->ImportFromCSV(importFilename, false);
+                    if (success) {
+                        dialog->UpdateStatus("Successfully imported expressions from " + string(importFilename), false);
+                        dialog->RefreshUserExpressionList();
+                        dialog->parentApp->RefreshDerivedMenu();
+                    } else {
+                        dialog->UpdateStatus("Failed to import expressions from CSV file", true);
+                    }
+                }
+            }
+            
+            if (importFilename) XtFree(importFilename);
+            XtUnmanageChild(w);
+        }, (XtPointer) this);
+        
+    XtAddCallback(promptDialog, XmNcancelCallback,
+        [](Widget w, XtPointer clientData, XtPointer callData) {
+            amrex::ignore_unused(clientData, callData);
+            XtUnmanageChild(w);
+        }, (XtPointer) this);
+        
+    XtManageChild(promptDialog);
+}
+
+void ExpressionDialog::ExportCSV()
+{
+    if (!parentApp || !parentApp->GetExpressionManager()) {
+        UpdateStatus("Expression manager not available", true);
+        return;
+    }
+    
+    // Check if there are any expressions to export
+    const amrex::Vector<string>& expressionNames = parentApp->GetExpressionManager()->GetExpressionNames();
+    if (expressionNames.empty()) {
+        UpdateStatus("No expressions to export", true);
+        return;
+    }
+    
+    // Create a simple prompt dialog to get filename
+    Arg args[10];
+    int n = 0;
+    
+    XmString titleStr = XmStringCreateSimple(const_cast<char*>("Export Expressions"));
+    XmString labelStr = XmStringCreateSimple(const_cast<char*>("Enter CSV filename:"));
+    XmString defaultStr = XmStringCreateSimple(const_cast<char*>("expressions.csv"));
+    
+    XtSetArg(args[n], XmNdialogTitle, titleStr); n++;
+    XtSetArg(args[n], XmNselectionLabelString, labelStr); n++;
+    XtSetArg(args[n], XmNtextString, defaultStr); n++;
+    
+    Widget promptDialog = XmCreateSelectionDialog(wDialogShell, 
+        const_cast<char*>("exportDialog"), args, n);
+        
+    XmStringFree(titleStr);
+    XmStringFree(labelStr);
+    XmStringFree(defaultStr);
+    
+    // Remove Help button
+    XtUnmanageChild(XmSelectionBoxGetChild(promptDialog, XmDIALOG_HELP_BUTTON));
+    
+    // Add callbacks for OK and Cancel
+    XtAddCallback(promptDialog, XmNokCallback, 
+        [](Widget w, XtPointer clientData, XtPointer callData) {
+            ExpressionDialog* dialog = static_cast<ExpressionDialog*>(clientData);
+            XmSelectionBoxCallbackStruct* cbs = static_cast<XmSelectionBoxCallbackStruct*>(callData);
+            
+            char* exportFilename;
+            if (!XmStringGetLtoR(cbs->value, XmFONTLIST_DEFAULT_TAG, &exportFilename)) {
+                dialog->UpdateStatus("Failed to get filename", true);
+                XtUnmanageChild(w);
+                return;
+            }
+            
+            if (exportFilename && strlen(exportFilename) > 0) {
+                ExpressionManager* manager = dialog->parentApp->GetExpressionManager();
+                bool success = manager->ExportToCSV(exportFilename);
+                if (success) {
+                    dialog->UpdateStatus("Successfully exported expressions to " + string(exportFilename), false);
+                } else {
+                    dialog->UpdateStatus("Failed to export expressions to CSV file", true);
+                }
+            }
+            
+            if (exportFilename) XtFree(exportFilename);
+            XtUnmanageChild(w);
+        }, (XtPointer) this);
+        
+    XtAddCallback(promptDialog, XmNcancelCallback,
+        [](Widget w, XtPointer clientData, XtPointer callData) {
+            amrex::ignore_unused(clientData, callData);
+            XtUnmanageChild(w);
+        }, (XtPointer) this);
+        
+    XtManageChild(promptDialog);
 }

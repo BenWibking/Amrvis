@@ -136,6 +136,11 @@ public:
     // Validation
     bool ValidateExpression(const string& expression) const;
     const amrex::Vector<string>& GetAvailableVariables() const;
+    
+    // CSV Import/Export
+    bool ExportToCSV(const string& filename) const;
+    bool ImportFromCSV(const string& filename, bool replaceExisting = false);
+    int CountCSVExpressions(const string& filename) const;
 
 private:
     map<string, UserDerivedField*> expressions;

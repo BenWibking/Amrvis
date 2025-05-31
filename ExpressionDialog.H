@@ -69,6 +69,8 @@ private:
     Widget wLoadButton;
     Widget wModifyButton;
     Widget wDeleteButton;
+    Widget wImportButton;
+    Widget wExportButton;
     
     // Status and validation area
     Widget wStatusFrame;
@@ -112,6 +114,8 @@ private:
     static void CBLoadExpression(Widget w, XtPointer clientData, XtPointer callData);
     static void CBModifyExpression(Widget w, XtPointer clientData, XtPointer callData);
     static void CBDeleteExpression(Widget w, XtPointer clientData, XtPointer callData);
+    static void CBImportCSV(Widget w, XtPointer clientData, XtPointer callData);
+    static void CBExportCSV(Widget w, XtPointer clientData, XtPointer callData);
     
     // Internal callback implementations
     void ValidateExpression();
@@ -124,6 +128,8 @@ private:
     void LoadExpression();
     void ModifyExpression();
     void DeleteExpression();
+    void ImportCSV();
+    void ExportCSV();
     
     // Utility methods
     string GetExpressionText() const;

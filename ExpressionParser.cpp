@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <sstream>
 #include <cctype>
+#include <fstream>
 
 using namespace amrex;
 
@@ -546,4 +547,173 @@ void ExpressionManager::UpdateVariableContext()
     for (auto& pair : expressions) {
         pair.second->GetParser().SetAvailableVariables(availableVariables);
     }
+}
+
+bool ExpressionManager::ExportToCSV(const string& filename) const
+{
+    std::ofstream file(filename);
+    if (!file.is_open()) {
+        return false;
+    }
+    
+    // Write header
+    file << "name,expression\n";
+    
+    // Write each expression
+    for (const auto& pair : expressions) {
+        const string& name = pair.first;
+        const string& expression = pair.second->GetExpression();
+        
+        // Escape commas in name and expression by quoting
+        bool nameNeedsQuotes = (name.find(',') != std::string::npos || 
+                               name.find('"') != std::string::npos ||
+                               name.find('\n') != std::string::npos);
+        bool exprNeedsQuotes = (expression.find(',') != std::string::npos || 
+                               expression.find('"') != std::string::npos ||
+                               expression.find('\n') != std::string::npos);
+        
+        if (nameNeedsQuotes) {
+            file << "\"";
+            // Escape quotes by doubling them
+            for (char c : name) {
+                if (c == '"') file << "\"\"";
+                else file << c;
+            }
+            file << "\"";
+        } else {
+            file << name;
+        }
+        
+        file << ",";
+        
+        if (exprNeedsQuotes) {
+            file << "\"";
+            // Escape quotes by doubling them
+            for (char c : expression) {
+                if (c == '"') file << "\"\"";
+                else file << c;
+            }
+            file << "\"";
+        } else {
+            file << expression;
+        }
+        
+        file << "\n";
+    }
+    
+    file.close();
+    return true;
+}
+
+bool ExpressionManager::ImportFromCSV(const string& filename, bool replaceExisting)
+{
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        return false;
+    }
+    
+    string line;
+    bool isFirstLine = true;
+    int importedCount = 0;
+    
+    while (std::getline(file, line)) {
+        // Skip header line
+        if (isFirstLine) {
+            isFirstLine = false;
+            // Check if it looks like a header
+            if (line == "name,expression" || line.find("name") == 0) {
+                continue;
+            }
+            // If it doesn't look like a header, treat it as data
+        }
+        
+        if (line.empty()) continue;
+        
+        // Simple CSV parsing
+        string name, expression;
+        size_t commaPos = 0;
+        bool inQuotes = false;
+        
+        // Find the comma that separates name from expression
+        for (size_t i = 0; i < line.length(); ++i) {
+            if (line[i] == '"') {
+                inQuotes = !inQuotes;
+            } else if (line[i] == ',' && !inQuotes) {
+                commaPos = i;
+                break;
+            }
+        }
+        
+        if (commaPos == 0) {
+            // No comma found or comma is at the beginning
+            continue;
+        }
+        
+        // Extract name and expression
+        name = line.substr(0, commaPos);
+        expression = line.substr(commaPos + 1);
+        
+        // Remove quotes if present
+        auto removeQuotes = [](string& str) {
+            if (str.length() >= 2 && str[0] == '"' && str.back() == '"') {
+                str = str.substr(1, str.length() - 2);
+                // Unescape doubled quotes
+                size_t pos = 0;
+                while ((pos = str.find("\"\"", pos)) != std::string::npos) {
+                    str.replace(pos, 2, "\"");
+                    pos++;
+                }
+            }
+        };
+        
+        removeQuotes(name);
+        removeQuotes(expression);
+        
+        // Skip if name or expression is empty
+        if (name.empty() || expression.empty()) {
+            continue;
+        }
+        
+        // Check if expression already exists
+        if (!replaceExisting && expressions.find(name) != expressions.end()) {
+            continue;
+        }
+        
+        // Try to add the expression
+        if (AddExpression(name, expression)) {
+            importedCount++;
+        }
+    }
+    
+    file.close();
+    return importedCount > 0;
+}
+
+int ExpressionManager::CountCSVExpressions(const string& filename) const
+{
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        return -1;
+    }
+    
+    string line;
+    bool isFirstLine = true;
+    int count = 0;
+    
+    while (std::getline(file, line)) {
+        // Skip header line
+        if (isFirstLine) {
+            isFirstLine = false;
+            if (line == "name,expression" || line.find("name") == 0) {
+                continue;
+            }
+        }
+        
+        if (!line.empty()) {
+            count++;
+        }
+    }
+    
+    file.close();
+    return count;
 }

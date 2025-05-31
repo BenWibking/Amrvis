@@ -1,0 +1,6 @@
+name,expression
+velocity_magnitude,sqrt(u*u + v*v + w*w)
+kinetic_energy,0.5 * rho * (u*u + v*v + w*w)
+pressure_gradient,sqrt((dp/dx)*(dp/dx) + (dp/dy)*(dp/dy))
+vorticity_z,dv/dx - du/dy
+complex_expr,"func(a,b,c) + sqrt(x*x + y*y)"
