@@ -66,6 +66,11 @@ private:
     amrex::Vector<string> availableVariables;
     amrex::Vector<string> usedVariables;
     
+    // Variable name mapping for non-standard identifiers
+    map<string, string> originalToMapped;  // original variable name -> mapped name (e.g., "GasMomentum" -> "var_0")
+    map<string, string> mappedToOriginal;  // mapped name -> original variable name
+    string mappedExpression;               // expression with mapped variable names
+    
     // AMReX parser instance
     mutable amrex::Parser parser;
     
@@ -73,6 +78,11 @@ private:
     bool ValidateAndParse(const string& expression);
     void ExtractUsedVariables();
     bool CheckVariableAvailability() const;
+    
+    // Variable mapping helpers
+    void CreateVariableMapping();
+    string CreateMappedExpression(const string& expression) const;
+    bool IsValidIdentifier(const string& name) const;
 };
 
 // User-defined derived field management

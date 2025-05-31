@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <cctype>
 
 using namespace amrex;
 
@@ -41,7 +42,10 @@ bool ExpressionParser::SetExpression(const string& expression, const string& nam
         return false;
     }
     
-    isValid = ValidateAndParse(expression);
+    // Create mapped expression for parsing
+    mappedExpression = CreateMappedExpression(expression);
+    
+    isValid = ValidateAndParse(mappedExpression);
     if (isValid) {
         ExtractUsedVariables();
         isValid = CheckVariableAvailability();
@@ -68,27 +72,24 @@ void ExpressionParser::ClearExpression()
 {
     currentExpression = "";
     expressionName = "";
+    mappedExpression = "";
     isValid = false;
     lastError = "";
     usedVariables.clear();
+    originalToMapped.clear();
+    mappedToOriginal.clear();
 }
 
 void ExpressionParser::SetAvailableVariables(const Vector<string>& varNames)
 {
     availableVariables = varNames;
     
-    // Register variables with parser if we have a valid expression
-    if (!currentExpression.empty() && isValid) {
-        try {
-            parser.registerVariables(availableVariables);
-        } catch (const std::exception& e) {
-            // Continue - we'll validate availability separately
-        }
-    }
+    // Create variable mapping for non-standard identifiers
+    CreateVariableMapping();
     
     // Re-validate current expression if we have one
     if (!currentExpression.empty()) {
-        isValid = CheckVariableAvailability();
+        SetExpression(currentExpression, expressionName);
     }
 }
 
@@ -133,8 +134,27 @@ bool ExpressionParser::EvaluateExpression(const MultiFab& inputData,
             }
         }
         
+        // Create a new parser for evaluation with mapped expression and mapped variable names
+        Parser evalParser(mappedExpression);
+        
+        // Create mapped variable names for registration
+        Vector<string> mappedUsedVars;
+        for (const auto& var : usedVariables) {
+            auto it = originalToMapped.find(var);
+            if (it != originalToMapped.end()) {
+                mappedUsedVars.push_back(it->second);
+            } else {
+                mappedUsedVars.push_back(var);  // coordinate or standard variable
+            }
+        }
+        
+        evalParser.registerVariables(mappedUsedVars);
+        
         // Get compiled parser executor with correct number of variables
         const int numVars = static_cast<int>(usedVariables.size());
+        std::cout << "DEBUG ExpressionParser::EvaluateExpression: numVars = " << numVars << std::endl;
+        std::cout << "DEBUG ExpressionParser::EvaluateExpression: inputData.nComp() = " << inputData.nComp() << std::endl;
+        std::cout << "DEBUG ExpressionParser::EvaluateExpression: inputVarNames.size() = " << inputVarNames.size() << std::endl;
         
         // Evaluate expression for each grid
         for (MFIter mfi(result); mfi.isValid(); ++mfi) {
@@ -149,30 +169,30 @@ bool ExpressionParser::EvaluateExpression(const MultiFab& inputData,
             
             // Use template dispatch based on number of variables
             if (numVars == 0) {
-                auto executor = parser.compile<0>();
+                auto executor = evalParser.compile<0>();
                 amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE (int i, int j, int k) {
                     resultFab(i, j, k, destComp) = executor();
                 });
             } else if (numVars == 1) {
-                auto executor = parser.compile<1>();
+                auto executor = evalParser.compile<1>();
                 amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE (int i, int j, int k) {
                     resultFab(i, j, k, destComp) = executor(inputArrays[0](i, j, k));
                 });
             } else if (numVars == 2) {
-                auto executor = parser.compile<2>();
+                auto executor = evalParser.compile<2>();
                 amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE (int i, int j, int k) {
                     resultFab(i, j, k, destComp) = executor(inputArrays[0](i, j, k), 
                                                            inputArrays[1](i, j, k));
                 });
             } else if (numVars == 3) {
-                auto executor = parser.compile<3>();
+                auto executor = evalParser.compile<3>();
                 amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE (int i, int j, int k) {
                     resultFab(i, j, k, destComp) = executor(inputArrays[0](i, j, k), 
                                                            inputArrays[1](i, j, k),
                                                            inputArrays[2](i, j, k));
                 });
             } else if (numVars == 4) {
-                auto executor = parser.compile<4>();
+                auto executor = evalParser.compile<4>();
                 amrex::ParallelFor(box, [=] AMREX_GPU_DEVICE (int i, int j, int k) {
                     resultFab(i, j, k, destComp) = executor(inputArrays[0](i, j, k), 
                                                            inputArrays[1](i, j, k),
@@ -200,22 +220,38 @@ Real ExpressionParser::EvaluateAt(const Vector<Real>& varValues) const
     }
     
     try {
+        // Create a new parser for evaluation with mapped expression and mapped variable names
+        Parser evalParser(mappedExpression);
+        
+        // Create mapped variable names for registration
+        Vector<string> mappedUsedVars;
+        for (const auto& var : usedVariables) {
+            auto it = originalToMapped.find(var);
+            if (it != originalToMapped.end()) {
+                mappedUsedVars.push_back(it->second);
+            } else {
+                mappedUsedVars.push_back(var);  // coordinate or standard variable
+            }
+        }
+        
+        evalParser.registerVariables(mappedUsedVars);
+        
         const int numVars = static_cast<int>(varValues.size());
         
         if (numVars == 0) {
-            auto executor = parser.compile<0>();
+            auto executor = evalParser.compile<0>();
             return executor();
         } else if (numVars == 1) {
-            auto executor = parser.compile<1>();
+            auto executor = evalParser.compile<1>();
             return executor(varValues[0]);
         } else if (numVars == 2) {
-            auto executor = parser.compile<2>();
+            auto executor = evalParser.compile<2>();
             return executor(varValues[0], varValues[1]);
         } else if (numVars == 3) {
-            auto executor = parser.compile<3>();
+            auto executor = evalParser.compile<3>();
             return executor(varValues[0], varValues[1], varValues[2]);
         } else if (numVars == 4) {
-            auto executor = parser.compile<4>();
+            auto executor = evalParser.compile<4>();
             return executor(varValues[0], varValues[1], varValues[2], varValues[3]);
         } else {
             lastError = "Too many variables for point evaluation (max 4 supported)";
@@ -250,12 +286,19 @@ void ExpressionParser::ExtractUsedVariables()
     usedVariables.clear();
     
     try {
-        // Use AMReX Parser's robust symbol extraction
+        // Use AMReX Parser's symbol extraction on the mapped expression
         std::set<std::string> symbols = parser.symbols();
         
-        // Convert set to vector for easier handling
+        // Convert mapped variable names back to original names
         for (const auto& symbol : symbols) {
-            usedVariables.push_back(symbol);
+            auto it = mappedToOriginal.find(symbol);
+            if (it != mappedToOriginal.end()) {
+                // This is a mapped variable, use the original name
+                usedVariables.push_back(it->second);
+            } else {
+                // This is a regular variable (coordinate or standard identifier)
+                usedVariables.push_back(symbol);
+            }
         }
         
     } catch (const std::exception& e) {
@@ -272,6 +315,75 @@ bool ExpressionParser::CheckVariableAvailability() const
         }
     }
     return true;
+}
+
+bool ExpressionParser::IsValidIdentifier(const string& name) const
+{
+    if (name.empty()) return false;
+    
+    // Must start with letter or underscore
+    if (!std::isalpha(name[0]) && name[0] != '_') {
+        return false;
+    }
+    
+    // Rest must be alphanumeric or underscore
+    for (size_t i = 1; i < name.length(); ++i) {
+        if (!std::isalnum(name[i]) && name[i] != '_') {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+void ExpressionParser::CreateVariableMapping()
+{
+    originalToMapped.clear();
+    mappedToOriginal.clear();
+    
+    int varCounter = 0;
+    for (const auto& var : availableVariables) {
+        if (!IsValidIdentifier(var)) {
+            string mappedName = "var_" + std::to_string(varCounter++);
+            originalToMapped[var] = mappedName;
+            mappedToOriginal[mappedName] = var;
+        }
+    }
+}
+
+string ExpressionParser::CreateMappedExpression(const string& expression) const
+{
+    string result = expression;
+    
+    // Replace original variable names with mapped names
+    // Process longer names first to avoid partial replacements
+    vector<std::pair<string, string>> sortedMappings(originalToMapped.begin(), originalToMapped.end());
+    std::sort(sortedMappings.begin(), sortedMappings.end(), 
+              [](const std::pair<string, string>& a, const std::pair<string, string>& b) {
+                  return a.first.length() > b.first.length();
+              });
+    
+    for (const auto& mapping : sortedMappings) {
+        const string& original = mapping.first;
+        const string& mapped = mapping.second;
+        
+        size_t pos = 0;
+        while ((pos = result.find(original, pos)) != std::string::npos) {
+            // Verify it's a complete variable name, not part of another word
+            bool isStartOk = (pos == 0) || (!std::isalnum(result[pos-1]) && result[pos-1] != '_');
+            bool isEndOk = (pos + original.length() == result.length()) || 
+                          (!std::isalnum(result[pos + original.length()]) && result[pos + original.length()] != '_');
+            
+            if (isStartOk && isEndOk) {
+                result.replace(pos, original.length(), mapped);
+                pos += mapped.length();
+            } else {
+                pos++;
+            }
+        }
+    }
+    
+    return result;
 }
 
 // ===================================
@@ -399,7 +511,13 @@ bool ExpressionManager::EvaluateExpression(const string& name,
         return false;
     }
     
-    return field->Evaluate(inputData, availableVariables, result);
+    // Get the variables used by this specific expression
+    const Vector<string>& usedVars = field->GetParser().GetUsedVariables();
+    
+    std::cout << "DEBUG ExpressionManager::EvaluateExpression: usedVars.size() = " << usedVars.size() << std::endl;
+    std::cout << "DEBUG ExpressionManager::EvaluateExpression: inputData.nComp() = " << inputData.nComp() << std::endl;
+    
+    return field->Evaluate(inputData, usedVars, result);
 }
 
 bool ExpressionManager::ValidateExpression(const string& expression) const

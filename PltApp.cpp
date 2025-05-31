@@ -1791,7 +1791,7 @@ void PltApp::FindAndSetMinMax(const Amrvis::MinMaxRangeType mmrangetype,
     
     if (isUserExpr) {
       // For user expressions, evaluate over the domain and compute min/max
-      std::cout << "DEBUG FindAndSetMinMax: Taking user expression path" << std::endl;
+      std::cout << "DEBUG FindAndSetMinMax: Taking user expression path for '" << currentderived << "'" << std::endl;
       rMin =  std::numeric_limits<Real>::max();
       rMax = -std::numeric_limits<Real>::max();
       
@@ -1805,7 +1805,9 @@ void PltApp::FindAndSetMinMax(const Amrvis::MinMaxRangeType mmrangetype,
           MultiFab result(ba, dm, 1, 0);
           
           // Evaluate the user expression
+          std::cout << "DEBUG: About to call EvaluateUserExpression with '" << currentderived << "'" << std::endl;
           EvaluateUserExpression(currentderived, result, Vector<Box>(1, onBox[lev]), lev);
+          std::cout << "DEBUG: Returned from EvaluateUserExpression" << std::endl;
           
           // Compute min/max from the evaluated result
           levMin = result.min(0);
@@ -5478,13 +5480,12 @@ bool PltApp::IsUserExpression(const string& name) const {
 }
 
 void PltApp::EvaluateUserExpression(const string& expressionName, MultiFab& result, 
-                                    const Vector<Box>& validBoxes, int level) const {
+                                    const Vector<Box>&, int level) const {
   if (!expressionManager) {
     return;
   }
   
   // Get the data for this level from DataServices
-  const AmrData &amrData = dataServicesPtr[currentFrame]->AmrDataRef();
   const Vector<string> &varNames = dataServicesPtr[currentFrame]->PlotVarNames();
   
   // Create MultiFab with all the input variables needed for the expression
@@ -5494,22 +5495,71 @@ void PltApp::EvaluateUserExpression(const string& expressionName, MultiFab& resu
   }
   
   const Vector<string>& usedVars = userField->GetParser().GetUsedVariables();
+  std::cout << "DEBUG EvaluateUserExpression: usedVars.size() = " << usedVars.size() << std::endl;
+  for (int i = 0; i < static_cast<int>(usedVars.size()); ++i) {
+    std::cout << "DEBUG EvaluateUserExpression: usedVars[" << i << "] = '" << usedVars[i] << "'" << std::endl;
+  }
   if (usedVars.empty()) {
+    std::cout << "DEBUG EvaluateUserExpression: No used variables, returning" << std::endl;
     return;
   }
-  
-  // For now, create a simple MultiFab with the available variables
-  // This is a simplified implementation - full integration would require
-  // more sophisticated data management from DataServices
   
   // Create input MultiFab with the same layout as result
   MultiFab inputData(result.boxArray(), result.DistributionMap(), usedVars.size(), 0);
   
-  // Fill input data - this is where we'd need to get actual data from DataServices
-  // For now, we'll create placeholder data
-  inputData.setVal(1.0); // Placeholder
+  // Fill input data with actual variable data from DataServices
+  for (int ivar = 0; ivar < static_cast<int>(usedVars.size()); ++ivar) {
+    const string& varName = usedVars[ivar];
+    
+    // Find the variable index in the plotfile
+    int varIndex = -1;
+    for (int i = 0; i < static_cast<int>(varNames.size()); ++i) {
+      if (varNames[i] == varName) {
+        varIndex = i;
+        break;
+      }
+    }
+    
+    if (varIndex >= 0) {
+      // Get the variable data for this level using the public DataServices API
+      try {
+        // Temporarily allow multiple MFIters to avoid nested MFIter issues
+        int oldSetting = MFIter::allowMultipleMFIters(1);
+        
+        // Create MultiFab with same layout as result
+        MultiFab varData(result.boxArray(), result.DistributionMap(), 1, 0);
+        
+        // Fill each FArrayBox using the public Dispatch API
+        for (MFIter mfi(varData); mfi.isValid(); ++mfi) {
+          FArrayBox& fab = varData[mfi];
+          const Box& box = mfi.validbox();
+          
+          amrex::DataServices::Dispatch(amrex::DataServices::FillVarOneFab, 
+                                       dataServicesPtr[currentFrame],
+                                       (void *) &fab,
+                                       (void *) &box,
+                                       level,
+                                       (void *) &varName);
+        }
+        
+        // Copy the data to our input MultiFab
+        MultiFab::Copy(inputData, varData, 0, ivar, 1, 0);
+        
+        // Restore the original MFIter setting
+        MFIter::allowMultipleMFIters(oldSetting);
+      } catch (...) {
+        // If we can't get the data, fill with zeros
+        inputData.setVal(0.0, ivar, 1, 0);
+      }
+    } else {
+      // Variable not found, fill with zeros
+      inputData.setVal(0.0, ivar, 1, 0);
+    }
+  }
   
   // Evaluate the expression
+  std::cout << "DEBUG EvaluateUserExpression: About to call expressionManager->EvaluateExpression" << std::endl;
+  std::cout << "DEBUG EvaluateUserExpression: inputData.nComp() = " << inputData.nComp() << std::endl;
   expressionManager->EvaluateExpression(expressionName, inputData, result);
 }
 
